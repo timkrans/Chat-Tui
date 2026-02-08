@@ -46,7 +46,7 @@ func restore(s *termState) {
 func clear() {
 	if runtime.GOOS == "darwin" {
 		fmt.Print("\033c")
-	} else{
+	} else {
 		fmt.Print("\033[H\033[2J")
 	}
 }
@@ -83,29 +83,33 @@ func (l *ListView) draw() {
 		move(l.width-3, 3+i)
 		pos := l.offset + i
 		if pos >= len(l.items) {
-			fmt.Print("~") 
+			fmt.Print("~")
 			continue
 		}
 		if pos == l.index {
-			fmt.Print("> ", l.items[pos]) 
+			fmt.Print("> ", l.items[pos])
 		} else {
 			fmt.Print("  ", l.items[pos])
 		}
 	}
 }
 
-
 func (l *ListView) handle(b byte) {
-	if b == 'j' && l.index < len(l.items)-1 {
-		l.index++
-		if l.index >= l.offset+l.height {
-			l.offset++
-		}
-	}
-	if b == 'k' && l.index > 0 {
-		l.index--
-		if l.index < l.offset {
-			l.offset--
+	if b == '\033' {
+		b2 := readByte()
+		if b2 == '[' {
+			b3 := readByte()
+			if b3 == 'A' && l.index > 0 {
+				l.index--
+				if l.index < l.offset {
+					l.offset--
+				}
+			} else if b3 == 'B' && l.index < len(l.items)-1 {
+				l.index++
+				if l.index >= l.offset+l.height {
+					l.offset++
+				}
+			}
 		}
 	}
 }
@@ -115,7 +119,7 @@ type InputView struct {
 }
 
 func (i *InputView) draw() {
-	move(2, 15) 
+	move(2, 15)
 	fmt.Print("Input: ")
 	fmt.Print(string(i.text))
 }
@@ -123,7 +127,7 @@ func (i *InputView) draw() {
 func (i *InputView) handle(b byte) {
 	if b == 127 || b == 8 {
 		if len(i.text) > 0 {
-			i.text = i.text[:len(i.text)-1] 
+			i.text = i.text[:len(i.text)-1]
 		}
 		return
 	}
@@ -153,26 +157,26 @@ func main() {
 			"Foxtrot", "Golf", "Hotel", "India", "Juliet",
 			"Kilo", "Lima", "Mike", "November", "Oscar",
 		},
-		height: 8, 
-		width:  40, 
+		height: 8,
+		width:  40,
 	}
 
 	input := InputView{}
 
 	for {
-		clear() 
-		move(2, 1) 
+		clear()
+		move(2, 1)
 
-		fmt.Print("List view (j/k scroll, q quit)\n")
+		fmt.Print("List view (Up/Down scroll, q quit)\n")
 		list.draw()
 
-		move(2, 15) 
+		move(2, 15)
 		fmt.Print("Input: ")
 		input.draw()
 
 		b := readByte()
 		if b == 'q' {
-			break 
+			break
 		}
 
 		list.handle(b)
