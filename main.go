@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"syscall"
 	"unsafe"
+	"os/exec"
 )
 
 type termState syscall.Termios
@@ -25,6 +26,9 @@ func ioctlSet() uintptr {
 }
 
 func makeRaw() *termState {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	fd := int(os.Stdin.Fd())
 	var old syscall.Termios
 	syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlGet(), uintptr(unsafe.Pointer(&old)))
@@ -39,15 +43,24 @@ func makeRaw() *termState {
 }
 
 func restore(s *termState) {
+	if runtime.GOOS == "windows" {
+		return
+	}
 	fd := int(os.Stdin.Fd())
 	syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlSet(), uintptr(unsafe.Pointer((*syscall.Termios)(s))))
 }
 
 func clear() {
-	if runtime.GOOS == "darwin" {
-		fmt.Print("\033c")
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("cmd", "/C", "cls")
+		cmd.Stdout = os.Stdout
+		cmd.Run()
 	} else {
-		fmt.Print("\033[H\033[2J")
+		if runtime.GOOS == "darwin" {
+			fmt.Print("\033c")
+		} else {
+			fmt.Print("\033[H\033[2J")
+		}
 	}
 }
 
@@ -65,7 +78,11 @@ func showCursor() {
 
 func readByte() byte {
 	var b [1]byte
-	os.Stdin.Read(b[:])
+	if runtime.GOOS == "windows" {
+		fmt.Scanf("%c", &b)
+	} else {
+		os.Stdin.Read(b[:])
+	}
 	return b[0]
 }
 
@@ -142,7 +159,7 @@ func (i *InputView) handle(b byte) {
 
 func main() {
 	if runtime.GOOS == "windows" {
-		fmt.Println("windows not supported")
+		fmt.Println("Running on Windows.")
 		return
 	}
 
@@ -153,12 +170,12 @@ func main() {
 
 	list := ListView{
 		items: []string{
-			"Alpha", "Bravo", "Charlie", "Delta", "Echo",
+			"Alpha This is a test and sentence that goes on for a long time such that it shoud go of the screen", "Bravo", "Charlie", "Delta", "Echo",
 			"Foxtrot", "Golf", "Hotel", "India", "Juliet",
 			"Kilo", "Lima", "Mike", "November", "Oscar",
 		},
 		height: 8,
-		width:  40,
+		width:  0,
 	}
 
 	input := InputView{}
