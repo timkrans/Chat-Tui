@@ -167,8 +167,7 @@ func (i *InputView) handle(b byte, list *ListView) {
 
 func getOllamaResponse(inputText string) string {
 	url := "http://localhost:11434/api/generate"
-	payload := fmt.Sprintf(`{"prompt":"%s","max_tokens":50}`, inputText)
-
+	payload := fmt.Sprintf(`{"model": "%s", "prompt": "%s", "max_tokens": %d, "stream": false}`, "llama3.2", inputText, 50)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(payload)))
 	if err != nil {
 		fmt.Println("Error creating request:", err)
