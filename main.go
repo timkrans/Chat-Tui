@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"runtime"
 	"syscall"
 	"unsafe"
 	"os/exec"
+	"net/http"
+	"io/ioutil"
+	"time"
 )
 
 type termState syscall.Termios
@@ -150,7 +154,8 @@ func (i *InputView) handle(b byte, list *ListView) {
 	}
 	if b == '\r' {
 		if len(i.text) > 0 {
-			list.items = append(list.items, string(i.text))
+			response := getOllamaResponse(string(i.text))
+			list.items = append(list.items, response) 
 			i.text = nil
 		}
 		return
@@ -158,6 +163,35 @@ func (i *InputView) handle(b byte, list *ListView) {
 	if b >= 32 && b <= 126 {
 		i.text = append(i.text, rune(b))
 	}
+}
+
+func getOllamaResponse(inputText string) string {
+	url := "http://localhost:11434/api/generate"
+	payload := fmt.Sprintf(`{"prompt":"%s","max_tokens":50}`, inputText)
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(payload)))
+	if err != nil {
+		fmt.Println("Error creating request:", err)
+		return ""
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println("Error sending request:", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("Error reading response:", err)
+		return ""
+	}
+
+	return string(body)
 }
 
 func main() {
@@ -172,8 +206,7 @@ func main() {
 	defer showCursor()
 
 	list := ListView{
-		items: []string{
-		},
+		items:  []string{},
 		height: 8,
 		width:  0,
 	}
@@ -197,5 +230,22 @@ func main() {
 
 		list.handle(b)
 		input.handle(b, &list)
+
+		if b == '\r' && len(input.text) > 0 {
+			response := getOllamaResponse(string(input.text))
+
+			for i := 0; i < len(response); i++ {
+				list.items = append(list.items, string(response[i]))
+				clear()
+				move(2, 1)
+				fmt.Print("List view (Up/Down scroll, q quit)\n")
+				list.draw()
+				move(2, 15)
+				input.draw()
+				time.Sleep(200 * time.Millisecond)
+			}
+
+			input.text = nil
+		}
 	}
 }
