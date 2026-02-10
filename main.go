@@ -141,7 +141,7 @@ func (i *InputView) draw() {
 	fmt.Print(string(i.text))
 }
 
-func (i *InputView) handle(b byte) {
+func (i *InputView) handle(b byte, list *ListView) {
 	if b == 127 || b == 8 {
 		if len(i.text) > 0 {
 			i.text = i.text[:len(i.text)-1]
@@ -149,7 +149,10 @@ func (i *InputView) handle(b byte) {
 		return
 	}
 	if b == '\r' {
-		i.text = nil
+		if len(i.text) > 0 {
+			list.items = append(list.items, string(i.text))
+			i.text = nil
+		}
 		return
 	}
 	if b >= 32 && b <= 126 {
@@ -170,9 +173,6 @@ func main() {
 
 	list := ListView{
 		items: []string{
-			"Alpha This is a test and sentence that goes on for a long time such that it shoud go of the screen", "Bravo", "Charlie", "Delta", "Echo",
-			"Foxtrot", "Golf", "Hotel", "India", "Juliet",
-			"Kilo", "Lima", "Mike", "November", "Oscar",
 		},
 		height: 8,
 		width:  0,
@@ -188,7 +188,6 @@ func main() {
 		list.draw()
 
 		move(2, 15)
-		fmt.Print("Input: ")
 		input.draw()
 
 		b := readByte()
@@ -197,6 +196,6 @@ func main() {
 		}
 
 		list.handle(b)
-		input.handle(b)
+		input.handle(b, &list)
 	}
 }
