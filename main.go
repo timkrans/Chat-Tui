@@ -2,16 +2,21 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
-	"os/exec"
-	"net/http"
-	"io/ioutil"
-	"time"
 )
+
+type OllamaResponse struct {
+	Response string `json:"response"`
+}
 
 type termState syscall.Termios
 
@@ -30,9 +35,6 @@ func ioctlSet() uintptr {
 }
 
 func makeRaw() *termState {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
 	fd := int(os.Stdin.Fd())
 	var old syscall.Termios
 	syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlGet(), uintptr(unsafe.Pointer(&old)))
@@ -47,9 +49,6 @@ func makeRaw() *termState {
 }
 
 func restore(s *termState) {
-	if runtime.GOOS == "windows" {
-		return
-	}
 	fd := int(os.Stdin.Fd())
 	syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlSet(), uintptr(unsafe.Pointer((*syscall.Termios)(s))))
 }
@@ -60,11 +59,10 @@ func clear() {
 		cmd.Stdout = os.Stdout
 		cmd.Run()
 	} else {
-		if runtime.GOOS == "darwin" {
+		if runtime.GOOS == "darwin"{
 			fmt.Print("\033c")
-		} else {
-			fmt.Print("\033[H\033[2J")
 		}
+		fmt.Print("\033[H\033[2J")
 	}
 }
 
@@ -82,53 +80,72 @@ func showCursor() {
 
 func readByte() byte {
 	var b [1]byte
-	if runtime.GOOS == "windows" {
-		fmt.Scanf("%c", &b)
-	} else {
-		os.Stdin.Read(b[:])
-	}
+	os.Stdin.Read(b[:])
 	return b[0]
 }
 
+func termSize() (cols, rows int) {
+	ws := &struct {
+		row, col, x, y uint16
+	}{}
+	syscall.Syscall(
+		syscall.SYS_IOCTL,
+		uintptr(os.Stdout.Fd()),
+		uintptr(syscall.TIOCGWINSZ),
+		uintptr(unsafe.Pointer(ws)),
+	)
+	return int(ws.col), int(ws.row)
+}
+
+func clampLine(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
+
 type ListView struct {
-	items   []string
-	index   int
-	offset  int
-	height  int
-	width   int
-	scrollY int
+	items  []string
+	index  int
+	offset int
+	height int
 }
 
 func (l *ListView) draw() {
 	for i := 0; i < l.height; i++ {
-		move(l.width-3, 3+i)
+		move(2, 3+i)
 		pos := l.offset + i
 		if pos >= len(l.items) {
 			fmt.Print("~")
 			continue
 		}
+		line := clampLine(l.items[pos], 90)
 		if pos == l.index {
-			fmt.Print("> ", l.items[pos])
+			fmt.Print("> ", line)
 		} else {
-			fmt.Print("  ", l.items[pos])
+			fmt.Print("  ", line)
 		}
 	}
 }
 
 func (l *ListView) handle(b byte) {
 	if b == '\033' {
-		b2 := readByte()
-		if b2 == '[' {
-			b3 := readByte()
-			if b3 == 'A' && l.index > 0 {
-				l.index--
-				if l.index < l.offset {
-					l.offset--
+		if readByte() == '[' {
+			switch readByte() {
+			case 'A':
+				if l.index > 0 {
+					l.index--
+					if l.index < l.offset {
+						l.offset--
+					}
 				}
-			} else if b3 == 'B' && l.index < len(l.items)-1 {
-				l.index++
-				if l.index >= l.offset+l.height {
-					l.offset++
+			case 'B':
+				if l.index < len(l.items)-1 {
+					l.index++
+					if l.index >= l.offset+l.height {
+						l.offset++
+					}
 				}
 			}
 		}
@@ -141,85 +158,71 @@ type InputView struct {
 
 func (i *InputView) draw() {
 	move(2, 15)
-	fmt.Print("Input: ")
-	fmt.Print(string(i.text))
+	fmt.Print("Input: ", string(i.text))
 }
 
-func (i *InputView) handle(b byte, list *ListView) {
+func (i *InputView) handle(b byte) bool {
 	if b == 127 || b == 8 {
 		if len(i.text) > 0 {
 			i.text = i.text[:len(i.text)-1]
 		}
-		return
+		return false
 	}
 	if b == '\r' {
-		if len(i.text) > 0 {
-			response := getOllamaResponse(string(i.text))
-			list.items = append(list.items, response) 
-			i.text = nil
-		}
-		return
+		return true
 	}
 	if b >= 32 && b <= 126 {
 		i.text = append(i.text, rune(b))
 	}
+	return false
 }
 
-func getOllamaResponse(inputText string) string {
+func getOllamaResponse(input string) string {
 	url := "http://localhost:11434/api/generate"
-	payload := fmt.Sprintf(`{"model": "%s", "prompt": "%s", "max_tokens": %d, "stream": false}`, "llama3.2", inputText, 50)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer([]byte(payload)))
-	if err != nil {
-		fmt.Println("Error creating request:", err)
-		return ""
-	}
-
+	payload := fmt.Sprintf(`{"model":"llama3.2","prompt":%q,"stream":false}`, input)
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer([]byte(payload)))
 	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Println("Error sending request:", err)
 		return ""
 	}
 	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
+	var r OllamaResponse
+	json.Unmarshal(body, &r)
+	respText := strings.ReplaceAll(r.Response, "\\n", "\n")
+	respText = strings.ReplaceAll(r.Response, "\\t", "\t")
+	return respText
+}
 
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading response:", err)
-		return ""
+func fullScreenView(text string) {
+	clear()
+	_, rows := termSize()
+	lines := strings.Split(text, "\n")
+	max := rows - 2
+	for i := 0; i < len(lines) && i < max; i++ {
+		move(2, 1+i)
+		fmt.Print(lines[i])
 	}
-
-	return string(body)
+	move(2, rows)
+	fmt.Print("Press any key to return")
+	readByte()
 }
 
 func main() {
-	if runtime.GOOS == "windows" {
-		fmt.Println("Running on Windows.")
-		return
-	}
-
 	old := makeRaw()
 	defer restore(old)
 	hideCursor()
 	defer showCursor()
 
-	list := ListView{
-		items:  []string{},
-		height: 8,
-		width:  0,
-	}
-
+	list := ListView{height: 8}
 	input := InputView{}
 
 	for {
 		clear()
 		move(2, 1)
-
-		fmt.Print("List view (Up/Down scroll, q quit)\n")
+		fmt.Print("List view (Up/Down scroll, Enter open, q quit)")
 		list.draw()
-
-		move(2, 15)
 		input.draw()
 
 		b := readByte()
@@ -227,23 +230,17 @@ func main() {
 			break
 		}
 
+		if b == '\r' && len(input.text) == 0 && list.index < len(list.items) {
+			fullScreenView(list.items[list.index])
+			continue
+		}
+
 		list.handle(b)
-		input.handle(b, &list)
+		submit := input.handle(b)
 
-		if b == '\r' && len(input.text) > 0 {
-			response := getOllamaResponse(string(input.text))
-
-			for i := 0; i < len(response); i++ {
-				list.items = append(list.items, string(response[i]))
-				clear()
-				move(2, 1)
-				fmt.Print("List view (Up/Down scroll, q quit)\n")
-				list.draw()
-				move(2, 15)
-				input.draw()
-				time.Sleep(200 * time.Millisecond)
-			}
-
+		if submit && len(input.text) > 0 {
+			resp := getOllamaResponse(string(input.text))
+			list.items = append(list.items, resp)
 			input.text = nil
 		}
 	}
