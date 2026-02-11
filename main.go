@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"strings"
 	"syscall"
@@ -217,6 +218,16 @@ func main() {
 
 	list := ListView{height: 8}
 	input := InputView{}
+	//fixes error with git push
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		restore(old)
+		showCursor()
+		fmt.Println("\nInterrupted. Terminal restored.")
+		os.Exit(0)
+	}()
 
 	for {
 		clear()
